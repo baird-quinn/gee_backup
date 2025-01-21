@@ -1,0 +1,760 @@
+// trying on collection east river and taylor 2018, 2019, 2024 Peak SWE-ish scenes (2016 weird so not trying...)
+// define pi :)
+var pi = Math.PI;
+
+// western us square
+var wus = ee.FeatureCollection('projects/ee-baird-a-quinn/assets/geom/west_us_sq');
+Map.addLayer(wus, {}, 'roi', false);
+
+Map.setCenter(-107, 38.9, 10);
+
+// Mark's SCF, reproject to epsg4326
+var scf = ee.Image("projects/ee-mraleig1/assets/Landsat_all_WY1988-WY2021_thresh10_excL7_SPI_AprAug").rename("scf").reproject({crs: 'EPSG:4326', scale: 30});
+
+// era5 layers for respective lidar dates @ 12:00, bilinearly interpolated
+var esd20180330 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2018-03-30T12:00:00', '2018-03-30T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // gt18
+      
+var esd20180331 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2018-03-31T12:00:00', '2018-03-31T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // er18
+
+var esd20190407 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2019-04-07T12:00:00', '2019-04-07T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // er19
+
+var esd20190408 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2019-04-08T12:00:00', '2019-04-08T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // gt19
+
+var esd20230401 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2023-04-01T12:00:00', '2023-04-01T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // er/gt23
+      
+var esd20240403 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2024-04-03T12:00:00', '2024-04-03T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // er 24
+
+var esd20240404 = (
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2024-04-04T12:00:00', '2024-04-04T13:00:00')))
+      .first().rename('esd').resample('bilinear'); // gt24
+
+
+// interpolated relative elevation
+// load in nasa dem
+var dem = (ee.Image('NASA/NASADEM_HGT/001').select('elevation'));
+
+// era5 (getting snow depth for random day so can obtain projection/scale)
+var esd = ((
+      ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
+      .select('snow_depth')
+      .filter(ee.Filter.date('2019-04-07', '2019-04-08'))).first());
+// Map.addLayer(esd, {'min': 0, 'max': 2, 'palette': ['#0086c0', 'ffffff']}, "era5 snow depth", false);
+var era_proj = esd.projection();
+// print(era_proj);
+var era_scale = era_proj.nominalScale();
+// print(era_scale);
+
+// reproject elevation at era scale
+var eraelev = dem.reproject({crs:era_proj, scale: era_scale});
+
+Map.addLayer(dem, {'min': 1000, 'max': 4000, 'palette': ['#00a22c', '#c8cf00', '#e6260f', 'ffffff']}, "nasa dem", false);
+Map.addLayer(eraelev, {'min': 1000, 'max': 4000, 'palette': ['#00a22c', '#c8cf00', '#e6260f', 'ffffff']}, "era-scale elevation", false);
+
+// interpolate
+var eraelev_interp = eraelev.resample('bilinear');
+Map.addLayer(eraelev_interp, {'min': 1000, 'max': 4000, 'palette': ['#00a22c', '#c8cf00', '#e6260f', 'ffffff']}, "interpolated elevation", false);
+
+// create relative elevation (elevation - era elevation)
+var relev = dem.subtract(eraelev_interp).rename('relev').reproject({crs: 'EPSG:4326', scale: 50});
+Map.addLayer(relev, {'min': -500, 'max': 500, 'palette': ['#e6260f', '#c8cf00', 'ffffff', '#0fbce6', '#7c65e8']}, "interpolated relative elevation", false);
+
+// northness and eastness
+// northness
+var nt = ee.Terrain.slope(dem).multiply((ee.Terrain.aspect(dem).multiply(pi/180)).cos()).rename('nt').reproject({crs: 'EPSG:4326', scale: 50});
+
+// eastness
+var et = ee.Terrain.slope(dem).multiply((ee.Terrain.aspect(dem).multiply(pi/180)).sin()).rename('et').reproject({crs: 'EPSG:4326', scale: 50});
+
+// chili - 10m resolution (https://developers.google.com/earth-engine/datasets/catalog/CSP_ERGo_1_0_US_CHILI)
+var chili = ee.Image('CSP/ERGo/1_0/US/CHILI').select('constant').rename('chili').reproject({crs: 'EPSG:4326', scale: 50});
+
+// visibility palettes          
+var evis = {'min': 2500, 'max': 4000, 'palette': ['0000ff','00ffff','ffff00','ff0000','ffffff'],}; // elevation
+var revis = {'min': -500,'max': 500,'palette': ['FFA500','ffffff','ff0000'],}; // relative elevation
+var chvis = {'min': 100, 'max': 250, 'palette': ['ffffff', '000000'],}; // chili vis
+var svis = {'min': 0.0, 'max': 4, 'palette': ['003366', 'ffffff'],}; // snow depth (blue to white)
+var envis = {'min': -25, 'max': 25, 'palette': ['000000', 'ffffff'],};
+var scvis = {'min': 0.0, 'max': 0.7, 'palette': ['000000', 'FF69B4'],}; // scf black to hot Bink
+
+// rois, conservative to clip out nasty edges and create consistent training area pool
+var roier = ee.FeatureCollection('projects/ee-baird-a-quinn/assets/geom/er_multi');
+var roigt = ee.FeatureCollection('projects/ee-baird-a-quinn/assets/geom/gt_multi');
+
+//// lidar layers, and clipping and reprojecting (using 2018, 2019, 2024. saving 2023 for independent validation)
+var er20180331 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOER_20180331").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+var er20190407 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOER_20190407").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+var er20230401 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOER_20230401").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+var er20240403 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOER_20240403").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+
+var gt20180330 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOGT_20180330").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+var gt20190408 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOGT_20190408").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+var gt20230401 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOGT_20230401").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+var gt20240404 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOGT_20240404").rename('lsd').reproject({crs: 'EPSG:4326', scale: 50});
+
+// // find projections of all layers (so can synchronize later) - checked and they all epsg4326 now :)
+// print('era projection', esd20180331.projection());
+// print('scf projection', scf.projection());
+// print('relative elevation projection', relev.projection());
+// print('chili projection', chili.projection());
+// print('tc projection', tc.projection());
+// print('lidar projection', er20180331.projection());
+// print('gt lidar projection', gt20240404.projection());
+
+// // visualize input layers if needed
+// Map.addLayer(elev, evis, "elevation", false);
+// Map.addLayer(relev, revis, "relative elevation", false);
+Map.addLayer(chili, chvis, "chili", false);
+Map.addLayer(scf, scvis, "scf from landsat", false);
+// Map.addLayer(er20230401, svis, "2023 East River lidar snow depth", false);
+
+// Get the projection of the elevation dataset - using that for now (30m res)
+var projection = relev.select('relev').projection();
+
+// Get the scale (pixel size) of the image
+var scale = projection.nominalScale();
+
+// smushin variables for each lidar scene, masking 0 values (bad data in some scenes), clipping to unadulterated lidar polygon
+var cer20180331 = er20180331.updateMask(er20180331.gt(0)).addBands(esd20180331).addBands(scf).addBands(relev).addBands(et).clip(roier);
+var cer20190407 = er20190407.updateMask(er20190407.gt(0)).addBands(esd20190407).addBands(scf).addBands(relev).addBands(et).clip(roier);
+var cer20230401 = er20230401.updateMask(er20230401.gt(0)).addBands(esd20230401).addBands(scf).addBands(relev).addBands(et).clip(roier);
+var cer20240403 = er20240403.updateMask(er20240403.gt(0)).addBands(esd20240403).addBands(scf).addBands(relev).addBands(et).clip(roier);
+var cgt20180330 = gt20180330.updateMask(gt20180330.gt(0)).addBands(esd20180330).addBands(scf).addBands(relev).addBands(et).clip(roigt);
+var cgt20190408 = gt20190408.updateMask(gt20190408.gt(0)).addBands(esd20190408).addBands(scf).addBands(relev).addBands(et).clip(roigt);
+var cgt20230401 = gt20230401.updateMask(gt20230401.gt(0)).addBands(esd20230401).addBands(scf).addBands(relev).addBands(et).clip(roigt);
+var cgt20240404 = gt20240404.updateMask(gt20240404.gt(0)).addBands(esd20240404).addBands(scf).addBands(relev).addBands(et).clip(roigt);
+
+
+// // creating points in the center of each elevation pixel for both areas
+// // Create an image with the longitude and latitude of each pixel
+// var lonLatImage = ee.Image.pixelLonLat().reproject(projection);
+
+// // Sample the longitude and latitude of each elevation pixel in the ROI
+// var sampledPoints = lonLatImage.sample({
+//   region: roier,
+//   scale: scale,
+//   projection: projection,
+//   geometries: true // Include the geometry of each point
+// });
+
+// // east river points
+// // Create a FeatureCollection from the sampled points
+// var erpts = ee.FeatureCollection(sampledPoints);
+// Map.addLayer(erpts, {color: 'red'}, 'Pixel Centers', false);
+
+// // exporting to asset cuz it take forever to run
+// var erexportParameters = {
+//   collection: erpts, // FeatureCollection to export
+//   description: 'er_30_pts1', // Name of the exported asset
+//   assetId: 'users/baird.a.quinn/SCF', // Asset ID where the file will be saved
+// };
+
+// // Export the FeatureCollection to Earth Engine asset
+// Export.table.toAsset(erexportParameters);
+
+
+// // taylor points
+// // Sample the longitude and latitude of each elevation pixel in the ROI
+// var sampgt = lonLatImage.sample({
+//   region: roigt,
+//   scale: scale,
+//   projection: projection,
+//   geometries: true // Include the geometry of each point
+// });
+
+// // Create a FeatureCollection from the sampled points
+// var gtpts = ee.FeatureCollection(sampgt);
+// Map.addLayer(gtpts, {color: 'red'}, 'Pixel Centers', false);
+
+// // exporting to asset cuz it take forever to run
+// var gtexportParameters = {
+//   collection: gtpts, // FeatureCollection to export
+//   description: 'gt_30_pts1', // Name of the exported asset
+//   assetId: 'users/baird.a.quinn/SCF', // Asset ID where the file will be saved
+// };
+
+// // Export the FeatureCollection to Earth Engine asset
+// Export.table.toAsset(gtexportParameters);
+
+
+// // make training points
+// // load in points at the center of each elevation pixel (both ~800,000 points)
+// var erpts = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/pts/er30m1");
+// var gtpts = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/pts/gt30m1");
+
+// // Map.addLayer(erpts, {color: 'orange'}, 'east river points', false);
+// // Map.addLayer(gtpts, {color: 'purple'}, 'taylor points', false);
+
+
+// // adding raster values to the points for each lidar scene
+// var er20180331pts = cer20180331.reduceRegions({
+//   collection: erpts, // feature collection of points
+//   reducer: ee.Reducer.mean(),
+//   scale: scale});
+
+// var er20190407pts = cer20190407.reduceRegions({
+//   collection: erpts, // feature collection of points
+//   reducer: ee.Reducer.mean(),
+//   scale: scale});
+
+// var er20240403pts = cer20240403.reduceRegions({
+//   collection: erpts, // feature collection of points
+//   reducer: ee.Reducer.mean(),
+//   scale: scale});
+
+// var gt20180330pts = cgt20180330.reduceRegions({
+//   collection: gtpts, // feature collection of points
+//   reducer: ee.Reducer.mean(),
+//   scale: scale});
+  
+// var gt20190408pts = cgt20190408.reduceRegions({
+//   collection: gtpts, // feature collection of points
+//   reducer: ee.Reducer.mean(),
+//   scale: scale});  
+  
+// var gt20240404pts = cgt20240404.reduceRegions({
+//   collection: gtpts, // feature collection of points
+//   reducer: ee.Reducer.mean(),
+//   scale: scale});
+  
+// // making a stratified training samples...
+// // classes to stratify equally in to
+// var classes = [
+//   {min: 0, max: 0.1},
+//   {min: 0.1, max: 0.5},
+//   {min: 0.5, max: 1},
+//   {min: 1, max: 1.5},
+//   {min: 1.5, max: 2},
+//   {min: 2, max: 3},
+//   {min: 3, max: 4},
+//   {min: 4, max: 100}
+// ];
+
+// // Function to sample points within each range (thanks chat)
+// var er20180331samps = classes.map(function(range) {
+//   // Filter features within the range and take a random sample
+//   var strsamp = er20180331pts
+//     .filter(ee.Filter.gte('lsd', range.min))
+//     .filter(ee.Filter.lt('lsd', range.max))
+//     .randomColumn().sort('random', true).limit(10000);  // creating random value for each point, sorting, then selecting first 10000
+//   return strsamp;
+// });
+// // merge samples into a FeatureCollection
+// var er20180331samp = ee.FeatureCollection(er20180331samps).flatten();
+
+// // doing the same for the rest of the scenes
+// var er20190407smp = classes.map(function(range) {
+//   // Filter features within the range and take a random sample
+//   var strsamp = er20190407pts
+//     .filter(ee.Filter.gte('lsd', range.min))
+//     .filter(ee.Filter.lt('lsd', range.max))
+//     .randomColumn().sort('random', true).limit(10000);  // creating random value for each point, sorting, then selecting first 10000
+//   return strsamp;
+// });
+// // merge samples into a FeatureCollection
+// var er20190407samp = ee.FeatureCollection(er20190407smp).flatten();
+
+// // Function to sample points within each range (thanks chat)
+// var er20240403smp = classes.map(function(range) {
+//   // Filter features within the range and take a random sample
+//   var strsamp = er20240403pts
+//     .filter(ee.Filter.gte('lsd', range.min))
+//     .filter(ee.Filter.lt('lsd', range.max))
+//     .randomColumn().sort('random', true).limit(10000);  // creating random value for each point, sorting, then selecting first 10000
+//   return strsamp;
+// });
+// // merge samples into a FeatureCollection
+// var er20240403samp = ee.FeatureCollection(er20240403smp).flatten();
+
+// // Function to sample points within each range (thanks chat)
+// var gt20180330smp = classes.map(function(range) {
+//   // Filter features within the range and take a random sample
+//   var strsamp = gt20180330pts
+//     .filter(ee.Filter.gte('lsd', range.min))
+//     .filter(ee.Filter.lt('lsd', range.max))
+//     .randomColumn().sort('random', true).limit(10000);  // creating random value for each point, sorting, then selecting first 10000
+//   return strsamp;
+// });
+// // merge samples into a FeatureCollection
+// var gt20180330samp = ee.FeatureCollection(gt20180330smp).flatten();
+
+// // Function to sample points within each range (thanks chat)
+// var gt20190408smp = classes.map(function(range) {
+//   // Filter features within the range and take a random sample
+//   var strsamp = gt20190408pts
+//     .filter(ee.Filter.gte('lsd', range.min))
+//     .filter(ee.Filter.lt('lsd', range.max))
+//     .randomColumn().sort('random', true).limit(10000);  // creating random value for each point, sorting, then selecting first 10000
+//   return strsamp;
+// });
+// // merge samples into a FeatureCollection
+// var gt20190408samp = ee.FeatureCollection(gt20190408smp).flatten();
+
+// // Function to sample points within each range (thanks chat)
+// var gt20240404smp = classes.map(function(range) {
+//   // Filter features within the range and take a random sample
+//   var strsamp = gt20240404pts
+//     .filter(ee.Filter.gte('lsd', range.min))
+//     .filter(ee.Filter.lt('lsd', range.max))
+//     .randomColumn().sort('random', true).limit(10000);  // creating random value for each point, sorting, then selecting first 10000
+//   return strsamp;
+// });
+// // merge samples into a FeatureCollection
+// var gt20240404samp = ee.FeatureCollection(gt20240404smp).flatten();
+
+
+// // save the points 
+// // Define the asset export parameters, training and validation
+// var exp_tr1 = {
+//   collection: er20180331samp, // FeatureCollection to export
+//   description: 'er20180331samp', // Name of the exported asset
+//   assetId: 'train/stratsamps/er20180331_noch', // Asset ID where the file will be saved
+// };
+
+// var exp_tr2 = {
+//   collection: er20190407samp, // FeatureCollection to export
+//   description: 'er20190407samp', // Name of the exported asset
+//   assetId: 'train/stratsamps/er20190407_noch', // Asset ID where the file will be saved
+// };
+
+// var exp_tr3 = {
+//   collection: er20240403samp, // FeatureCollection to export
+//   description: 'er20240403samp', // Name of the exported asset
+//   assetId: 'train/stratsamps/er20240403_noch', // Asset ID where the file will be saved
+// };
+
+// var exp_tr4 = {
+//   collection: gt20180330samp, // FeatureCollection to export
+//   description: 'gt20180330samp', // Name of the exported asset
+//   assetId: 'train/stratsamps/gt20180330_noch', // Asset ID where the file will be saved
+// };
+
+// var exp_tr5 = {
+//   collection: gt20190408samp, // FeatureCollection to export
+//   description: 'gt20190408samp', // Name of the exported asset
+//   assetId: 'train/stratsamps/gt20190408_noch', // Asset ID where the file will be saved
+// };
+
+// var exp_tr6 = {
+//   collection: gt20240404samp, // FeatureCollection to export
+//   description: 'gt20240404samp', // Name of the exported asset
+//   assetId: 'train/stratsamps/gt20240404samp_noch', // Asset ID where the file will be saved
+// };
+
+// // Export the FeatureCollections to Earth Engine asset
+// Export.table.toAsset(exp_tr1);
+// Export.table.toAsset(exp_tr2);
+// Export.table.toAsset(exp_tr3);
+// Export.table.toAsset(exp_tr4);
+// Export.table.toAsset(exp_tr5);
+// Export.table.toAsset(exp_tr6);
+
+
+//// training!
+// load in the pts from asset, then combine
+var pter20180331 = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/stratsamps/er20180331_noch");
+var pter20190407 = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/stratsamps/er20190407_noch");
+var pter20240403 = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/stratsamps/er20240403_noch");
+var ptgt20180330 = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/stratsamps/gt20180330_noch");
+var ptgt20190408 = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/stratsamps/gt20190408_noch");
+var ptgt20240404 = ee.FeatureCollection("projects/ee-baird-a-quinn/assets/train/stratsamps/gt20240404_noch");
+
+var tpts = pter20180331.merge(pter20190407).merge(pter20240403).merge(ptgt20180330).merge(ptgt20190408).merge(ptgt20240404);
+
+// random forest regression 
+var rf = ee.Classifier.smileRandomForest({
+  numberOfTrees: 50,
+  variablesPerSplit: 2,
+  minLeafPopulation: 1,
+  maxNodes: 300,
+  seed: 1
+  })
+  
+  .setOutputMode('REGRESSION')
+  .train({
+    features: tpts,
+    classProperty: 'lsd',
+    inputProperties: ['relev', 'scf', 'esd', 'et'] });
+
+print('RF info:', rf.explain());
+
+// // save rf as asset
+// var rfsave = Export.classifier.toAsset(rf);
+
+
+// // saved above, load in rf (when ready)
+
+// var rf = ee.Classifier.load("projects/ee-baird-a-quinn/assets/RF/rSD2")
+// print("rf info", rf.explain());
+
+
+// // predict at lidar scale... 
+
+// waiting on efficient separation of training and validation before trying on training sites
+// var pred18gt = cgt20180330.classify(rf, "predicted SD GT 2018")
+//     .reproject({
+//     crs: cgt20180330.select("relev").projection(),
+//     scale: 50
+//   });
+
+// var pred18er = cer20180331.classify(rf, "predicted SD ER 2018")
+//     .reproject({
+//     crs: cer20180331.select("relev").projection(),
+//     scale: 50
+//   });
+
+// testing in untrained area (crystal/aspen area)
+var roicm = ee.FeatureCollection('projects/ee-baird-a-quinn/assets/geom/CM_perim');
+var ccm20190407 = ee.Image("projects/ee-baird-a-quinn/assets/lidar/ASO_50M_SD_USCOCM_20190407").rename('lsd').addBands(esd20190407).addBands(scf).addBands(relev).addBands(et).clip(roicm);
+
+var pred19cm = ccm20190407.classify(rf, "predicted SD ER 2023")
+    .reproject({
+    crs: cer20230401.select("relev").projection(),
+    scale: 50
+  });
+
+var pred23gt = cgt20230401.classify(rf, "predicted SD ER 2023")
+    .reproject({
+    crs: cgt20230401.select("relev").projection(),
+    scale: 50
+  });
+
+var pred23er = cer20230401.classify(rf, "predicted SD ER 2023")
+    .reproject({
+    crs: cer20230401.select("relev").projection(),
+    scale: 50
+  });
+
+
+Map.addLayer(pred19cm, svis, "predicted sd 20190407", false);  
+Map.addLayer(pred23er, svis, "predicted sd er 2023", false);
+Map.addLayer(pred23gt, svis, 'predicted sd gt 2023', false);
+Map.addLayer(cer20230401.select('esd'), svis, "era sd 2023", false);
+
+
+// find differences between rf-predicted/era and lidar
+var diff19cmrf = pred19cm.subtract(ccm20190407.select('lsd'));
+var diff19cmera = ccm20190407.select('esd').subtract(ccm20190407.select('lsd'));
+var diff23errf = pred23er.subtract(cer20230401.select("lsd"));
+var diff23erera = cer20230401.select('esd').subtract(cer20230401.select("lsd"));
+var diff23gtrf = pred23gt.subtract(cgt20230401.select('lsd'));
+var diff23gtera = cgt20230401.select('esd').subtract(cgt20230401.select('lsd'));
+
+var difvis = {'min': -4, 'max': 4, 'palette': ['DC143C', 'ffffff', '006400'],}; 
+Map.addLayer(ccm20190407.select("lsd"), svis, '2019 crystal lidar', false);
+Map.addLayer(diff19cmrf, difvis, "rf-actual castle 2019", false);
+Map.addLayer(cer20230401.select("lsd"), svis, "2023 east river lidar", false);
+Map.addLayer(diff23errf, difvis, "rf-actual predicted 2023 east river", false);
+Map.addLayer(diff23erera, difvis, "era-actual predicted 2023 east river", false);
+Map.addLayer(cgt20230401.select("lsd"), svis, "2023 taylor river lidar", false);
+Map.addLayer(diff23gtrf, difvis, 'rf-actual 2023 taylor', false);
+Map.addLayer(diff23gtera, difvis, 'era-actual 2023 taylor', false);
+
+// calc rmse
+// Square the error values
+var sq19cmrf = diff19cmrf.pow(2);
+var sq19cmera = diff19cmera.pow(2);
+var sq23errf = diff23errf.pow(2);
+var sq23erera = diff23erera.pow(2);
+var sq23gtrf = diff23gtrf.pow(2);
+var sq23gtera = diff23gtera.pow(2);
+
+
+// Calculate the mean of the squared errors
+var mse19cmrf = sq19cmrf.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roicm,
+  scale: 50,
+  maxPixels: 1e15
+});
+
+var mse19cmera = sq19cmera.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roicm,
+  scale: 50,
+  maxPixels: 1e15
+});
+
+var mse23errf = sq23errf.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roier,
+  scale: 50,
+  maxPixels: 1e15
+});
+
+var mse23erera = sq23erera.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roier,
+  scale: 50,
+  maxPixels: 1e15
+});
+
+var mse23gtrf = sq23gtrf.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roigt,
+  scale: 50,
+  maxPixels: 1e15
+});
+
+var mse23gtera = sq23gtera.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roigt,
+  scale: 50,
+  maxPixels: 1e15
+});
+
+// Compute the square root of the mean squared errors to get the RMSE
+var rmse19cmrf = ee.Number(mse19cmrf.values().get(0)).sqrt();
+var rmse19cmera = ee.Number(mse19cmera.values().get(0)).sqrt();
+var rmse23errf = ee.Number(mse23errf.values().get(0)).sqrt();
+var rmse23erera = ee.Number(mse23erera.values().get(0)).sqrt();
+var rmse23gtrf = ee.Number(mse23gtrf.values().get(0)).sqrt();
+var rmse23gtera = ee.Number(mse23gtera.values().get(0)).sqrt();
+
+
+// calc average error (rf and era differences)
+var bias19cmrf = diff19cmrf.reduceRegion({
+  scale: 50,
+  reducer: ee.Reducer.mean(),
+});
+var bias19cmera = diff19cmera.reduceRegion({
+  scale: 50,
+  
+  reducer: ee.Reducer.mean(),
+});
+
+
+var bias23errf = diff23errf.reduceRegion({
+  scale: 50,
+  geometry: roier,
+  reducer: ee.Reducer.mean(),
+});
+var bias23erera = diff23erera.reduceRegion({
+  scale: 50,
+  geometry: roier,
+  reducer: ee.Reducer.mean(),
+});
+
+var bias23gtrf = diff23gtrf.reduceRegion({
+  scale: 50,
+  geometry: roigt,
+  reducer: ee.Reducer.mean(),
+});
+
+var bias23gtera = diff23gtera.reduceRegion({
+  scale: 50,
+  geometry: roigt,
+  reducer: ee.Reducer.mean(),
+});
+
+
+// Print the RMSE and Bias
+print('2019 CM RF RMSE', rmse19cmrf);
+print('2019 CM RF Bias', bias19cmrf);
+print('2019 CM ERA RMSE', rmse19cmera);
+print('2019 CM ERA Bias', bias19cmera)
+
+
+print('2023 ER RF RMSE', rmse23errf);
+print('2023 ER RF Bias', bias23errf);
+print('2023 ER ERA RMSE', rmse23erera);
+print('2023 ER ERA Bias', bias23erera)
+
+print('2023 GT RF RMSE', rmse23gtrf);
+print('2023 GT RF Bias', bias23gtrf);
+print('2023 GT ERA RMSE', rmse23gtera);
+print('2023 GT ERA Bias', bias23gtera);
+
+// exporting images so can analyze and visualize more easily in gis
+Export.image.toDrive({
+  image: pred23gt,
+  description: 'gt23rf',
+  folder: 'GEE/GEE_Images', 
+  fileNamePrefix: 'gt23rf', // File name prefix
+  region: roigt, // The region to export
+  maxPixels: 1e13 // Ensure large datasets can be processed
+});
+
+// // figures - probably just going to export to arcgis and excel as options limited
+// // snow depth title 2023
+// Map.add(ui.Label('Difference Between Lidar and Predicted Snow Depth. April 1, 2023', {
+//   fontWeight: 'bold', fontSize: '20px', margin: '10px'
+// }));
+
+// // error legend
+// // set position of panel
+// var leg1 = ui.Panel({
+//   style: {
+//     position: 'bottom-center',
+//     padding: '8px 15px',
+//   }
+// });
+
+// // Create legend title
+// var legendTitle = ui.Label({
+//   value: 'Snow Depth Error',
+//   style: {
+//     fontWeight: 'bold',
+//     fontSize: '18px',
+//     margin: '0 0 4px 0',
+//     padding: '0',
+//     }
+// });
+
+// // Add the title to the panel
+// leg1.add(legendTitle);
+    
+// // Creates and styles 1 row of the legend.
+// var makeRow = function(color, name) {
+      
+//       // Create the label that is actually the colored box.
+//       var colorBox = ui.Label({
+//         style: {
+//           backgroundColor: '#' + color,
+//           // Use padding to give the box height and width.
+//           padding: '8px',
+//           margin: '0 0 4px 0'
+//         }
+//       });
+      
+//       // Create the label filled with the description text.
+//       var description = ui.Label({
+//         value: name,
+//         style: {margin: '0 0 4px 6px'},
+        
+//       });
+      
+//       // return the panel
+//       return ui.Panel({
+//         widgets: [colorBox, description],
+//         layout: ui.Panel.Layout.Flow('horizontal')
+//       });
+// };
+
+// // name of the legend
+// var names = ['2 meters greater than predicted', '2 meters less than predicted'];
+// var color = ['DC143C', '006400']
+
+// // Add color and and names
+// for (var i = 0; i < 2; i++) {
+//   leg1.add(makeRow(color[i], names[i]));
+//   }  
+
+// Map.add(leg1);
+
+// //snow depth legend (copied from https://gis.stackexchange.com/questions/420594/put-a-legend-into-gee-map)
+// // set position of panel
+// var leg1 = ui.Panel({
+//   style: {
+//     position: 'bottom-center',
+//     padding: '8px 15px',
+//     backgroundColor: 'ADD8E6'
+//   }
+// });
+
+// // Create legend title
+// var legendTitle = ui.Label({
+//   value: 'Snow Depth (meters)',
+//   style: {
+//     fontWeight: 'bold',
+//     fontSize: '18px',
+//     margin: '0 0 4px 0',
+//     padding: '0',
+//     backgroundColor: 'ADD8E6'
+//     }
+// });
+
+// // Add the title to the panel
+// leg1.add(legendTitle);
+    
+// // Creates and styles 1 row of the legend.
+// var makeRow = function(color, name) {
+      
+//       // Create the label that is actually the colored box.
+//       var colorBox = ui.Label({
+//         style: {
+//           backgroundColor: '#' + color,
+//           // Use padding to give the box height and width.
+//           padding: '8px',
+//           margin: '0 0 4px 0'
+//         }
+//       });
+      
+//       // Create the label filled with the description text.
+//       var description = ui.Label({
+//         value: name,
+//         style: {margin: '0 0 4px 6px', backgroundColor: 'ADD8E6'},
+        
+//       });
+      
+//       // return the panel
+//       return ui.Panel({
+//         widgets: [colorBox, description],
+//         layout: ui.Panel.Layout.Flow('horizontal')
+//       });
+// };
+
+// // name of the legend
+// var names = ['0', '4'];
+// var color = ['003366', 'ffffff']
+
+// // Add color and and names
+// for (var i = 0; i < 2; i++) {
+//   leg1.add(makeRow(color[i], names[i]));
+//   }  
+
+// Map.add(leg1);
+
+
+// // charts (can be exported as csv)
+// var chart23errfdiff = ui.Chart.image.histogram({
+//     image: diff23errf,
+//     maxBuckets: 128,
+// })
+// .setOptions({
+//     title: 'RF-Predicted East River Snow Depth Residuals April 1, 2023',
+//     hAxis: {title: 'Lidar - Predicted Depth'},
+//     vAxis: {title: 'Count'},
+//     lineWidth: 2,
+//     pointSize: 4
+//   });
+  
+// var chart23ereradiff = ui.Chart.image.histogram({
+//     image: diff23erera,
+//     maxBuckets: 128,
+// })
+// .setOptions({
+//     title: 'ERA5 East River Snow Depth Residuals April 1, 2023',
+//     hAxis: {title: 'Lidar - ERA5 Depth'},
+//     vAxis: {title: 'Count'},
+//     lineWidth: 2,
+//     pointSize: 4
+//   });
+  
+// print(chart23errfdiff)
+// print(chart23ereradiff)
